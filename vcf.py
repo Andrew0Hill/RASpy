@@ -1,20 +1,12 @@
+import logging
+
 import numpy as np
 import os
+import time
 import subprocess
 import pandas as pd
 
-from enum import Enum
-
-class VCFHeaderField(Enum):
-    CHROM = 0
-    POS = 1
-    ID = 2
-    REF = 3
-    ALT = 4
-    QUAL = 5
-    FILTER = 6
-    INFO = 7
-    FORMAT = 8
+log = logging.getLogger(__name__)
 
 
 def _process_sample_entry(entry: str):
@@ -32,25 +24,62 @@ def _process_sample_entry(entry: str):
     return sum([np.nan if v == "." else int(v) for v in gt_vals])
 
 
-def _process_data_row(row: str):
-    columns = row.rstrip("\n").split("\t")
-    meta = columns[0:9]
-    samples = columns[9:]
-    # Data rows need to be processed to extract the GT field, but metadata fields are passed through unchanged.
-    return meta + [_process_sample_entry(sample) for sample in samples]
+def _calculate_frequency(elems):
+    return np.nanmean(elems)/2
 
 
-def read_vcf(path: str):
+def _process_data_rows(row_gen, max_freq: float = None):
+    # Iterate over the row generator.
+    for row in row_gen:
+        # Extract columns.
+        columns = row.rstrip("\n").split("\t")
+        meta = columns[0:9]
+        samples = columns[9:]
+        # Process each element of the row to extract the GT tag.
+        processed_row = [_process_sample_entry(sample) for sample in samples]
+        # Calculate the minor allele frequency of this variant
+        var_freq = _calculate_frequency(processed_row)
+        # If the max_freq filter is disabled (None) or frequency of
+        # this variant is <= max_freq, we yield the row.
+        # Rows which don't pass the filter are discarded.
+        if (max_freq is None) or (var_freq <= max_freq):
+            yield meta + processed_row
+
+
+def read_vcf(path: str, max_freq: float = None):
     with open(path, "r") as vcf_f:
+        start = time.perf_counter()
         # Skip all header lines which begin with a double hash.
         post_header_rows = (row for row in vcf_f if not row.startswith("##"))
         # The column label row will have a single hash.
         col_labels = next(post_header_rows).strip("#").split("\t")
         # Data rows are everything following the column label row.
-        data_rows = [_process_data_row(row=row) for row in post_header_rows]
+        data_rows = list(_process_data_rows(post_header_rows, max_freq=max_freq))
         # Create a dataframe output
         geno_df = pd.DataFrame.from_records(data_rows, columns=col_labels, index=col_labels[:9])
+        elapsed = time.perf_counter() - start
+        # Print information about the VCF.
+        log.info(f"VCF loaded in {elapsed:0.2f} seconds.")
+        log.info(f"After variant filtering, Genotype matrix has {geno_df.shape[0]} variants and {geno_df.shape[1]} samples.")
         return geno_df
+
+
+def read_traw(path: str, max_freq: float):
+    start = time.perf_counter()
+    # Read in .traw file, which is tab-delimited
+    traw_df = pd.read_csv(path, sep="\t", index_col=list(range(6)))
+    # PLINK2 .traw files hold the sum of the REF allele, so flip the count.
+    traw_df = 2-traw_df
+    # Calculate allele frequencies.
+    freqs = traw_df.apply(_calculate_frequency, axis=1)
+    # Filter on allele frequencies.
+    traw_df = traw_df.loc[freqs <= max_freq]
+    # Caculate elapsed time.
+    elapsed = time.perf_counter() - start
+    # Print information about the VCF.
+    log.info(f".traw file loaded in {elapsed:0.2f} seconds.")
+    log.info(f"After variant filtering, Genotype matrix has {traw_df.shape[0]} variants and {traw_df.shape[1]} samples.")
+    return traw_df
 
 
 def make_traw_from_vcf(vcf_path: str):
@@ -63,8 +92,6 @@ def make_traw_from_vcf(vcf_path: str):
 
     result = subprocess.check_output(arg_str)
 
-    print(result)
-
-
+    log.info(result)
 
 
