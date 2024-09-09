@@ -52,7 +52,7 @@ def _calculate_frequency(elems):
 
 def _process_data_rows(row_gen, max_freq: float = None):
     # Iterate over the row generator.
-    for row in row_gen:
+    for i, row in enumerate(row_gen):
         # Extract columns.
         columns = row.rstrip("\n").split("\t")
         meta = columns[0:9]
@@ -66,6 +66,8 @@ def _process_data_rows(row_gen, max_freq: float = None):
         # this variant is <= max_freq, we yield the row.
         # Rows which don't pass the filter are discarded.
         if (max_freq is None) or (var_freq <= max_freq):
+            if (i+1) % 1000 == 0:
+                log.info(f"Processed {i+1} variants...")
             yield meta + processed_row
 
 
