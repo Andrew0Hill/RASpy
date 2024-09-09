@@ -49,12 +49,13 @@ def compute_ras_original(df: pd.DataFrame, gens: int, num_vars: int, random_seed
         # Iterate samples again
         for sample2_ind, sample2_lbl in enumerate(sample_list):
             score_means = []
-
+            # Vector of all variants for sample1
             sample1_vec = df_arr[:, sample1_ind]
+            # Vector of all variants for sample2
             sample2_vec = df_arr[:, sample2_ind]
 
-            # Calculate which indices are valid (i.e. not NaN for either sample, and not 0 for sample1
-            # This saves us time inside the two inner loops, since we don't need to waste iterations sampling
+            # Calculate which indices are valid (i.e. not NaN for either sample, and not 0 for sample1)
+            # This saves us time inside the two inner loops, since we don't need to spend loop iterations sampling
             # from indices which are invalid.
             valid_idcs, = np.where(
                 np.logical_and(
@@ -80,8 +81,9 @@ def compute_ras_original(df: pd.DataFrame, gens: int, num_vars: int, random_seed
                     else:
                         if sum1 == 0:
                             raise ValueError
-                        # Simplified version of the similarity computation logic.
-                        # Original version (translated to Python) is available as a comment below.
+                        # Python version of the similarity computation.
+                        # Compared to original, we precompute allele sums, and
+                        # simplify similarity comparison logic.
                         # Behavior is identical to original version.
                         if sum2 == 0:
                             similarity = 0
@@ -89,32 +91,6 @@ def compute_ras_original(df: pd.DataFrame, gens: int, num_vars: int, random_seed
                             similarity = 1
                         else:
                             similarity = 0.5
-                        # Python version of Perl script code below.
-                        # Compared to the version above, we precompute the allele sums
-                        # when we read the VCF, so we don't need to recalculate
-                        # sum1 and sum2 multiple times unnecessarily.
-
-                        # allele1, allele2 = matrix[index, id1]
-                        # allele3, allele4 = matrix[index, id2]
-                        # sum1 = allele1 + allele2
-                        # sum2 = allele3 + allele4
-                        # if sum1 == 0:
-                        #     raise ValueError
-                        # elif sum1 == 1:
-                        #     if sum2 == 0:
-                        #         similarity=0
-                        #     elif sum2 == 1:
-                        #         similarity=1
-                        #     elif sum2 == 2:
-                        #         similarity=0.5
-                        # elif sum1 == 2:
-                        #     if sum2 == 0:
-                        #         similarity=0
-                        #     elif sum2 == 1:
-                        #         similarity=0.5
-                        #     elif sum2 == 2:
-                        #         similarity=1
-
                         # Construct a list of all scores for this generation
                         scores.append(similarity)
                 # Compute the estimate for this generation by averaging the num_vars scores.
