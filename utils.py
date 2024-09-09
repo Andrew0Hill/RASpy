@@ -10,7 +10,13 @@ log = logging.getLogger(__name__)
 
 
 def setup_logging(prefix: str):
+    """ Sets up logging for the program.
+
+    :param prefix: A prefix for the log file.
+    :return:
+    """
     log_name = f"{prefix}.log"
+    # Configure logging to write to a file and stderr.
     logging.basicConfig(
         level=logging.INFO,
         handlers=[
@@ -19,6 +25,8 @@ def setup_logging(prefix: str):
         ],
         format="%(asctime)s [%(levelname)s] (%(filename)s) %(message)s"
     )
+    # Capture warnings in the log file.
+    logging.captureWarnings(True)
     return log_name
 
 

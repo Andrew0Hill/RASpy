@@ -6,14 +6,32 @@ import time
 import subprocess
 import pandas as pd
 from collections import defaultdict
+from functools import cache
 from utils import memory_str
 
 log = logging.getLogger(__name__)
 
 
-def _process_sample_entry(entry: str):
+@cache
+def _get_format_dictionary(format_str: str):
+    return {v: i for i, v in enumerate(format_str.split(":"))}
+
+
+@cache
+def _get_format_key_index(format_str: str, key_str: str):
+
+    format_dict = _get_format_dictionary(format_str)
+
+    if key_str not in format_dict:
+        raise RuntimeError(f"FORMAT string does not contain a '{key_str}' field! Got: '{format_str}'.")
+
+    return format_dict[key_str]
+
+
+def _process_sample_entry(entry: str, format_str: str):
     fields = entry.split(":")
-    gt_field = fields[0]
+    gt_field_index = _get_format_key_index(format_str=format_str, key_str="GT")
+    gt_field = fields[gt_field_index]
 
     gt_vals = None
     for sep in ["/", "|"]:
@@ -21,15 +39,15 @@ def _process_sample_entry(entry: str):
             gt_vals = gt_field.split(sep)
             break
     if gt_vals is None or len(gt_vals) != 2:
-        log.warning(f"Encountered unexpected value '{gt_field}' for GT tag, will be coded as NaN.")
+        # log.warning(f"Encountered unexpected value '{gt_field}' for GT tag, will be coded as NaN.")
         gt_vals = (".", ".")
-        #raise RuntimeError(f"Error when parsing VCF, got unexpected value '{gt_field}' for GT tag.")
+        # raise RuntimeError(f"Error when parsing VCF, got unexpected value '{gt_field}' for GT tag.")
 
     return np.sum([np.float32(np.nan if v == "." else v) for v in gt_vals])
 
 
 def _calculate_frequency(elems):
-    return np.nanmean(elems)/2
+    return np.nanmean(elems) / 2
 
 
 def _process_data_rows(row_gen, max_freq: float = None):
@@ -39,10 +57,9 @@ def _process_data_rows(row_gen, max_freq: float = None):
         columns = row.rstrip("\n").split("\t")
         meta = columns[0:9]
         samples = columns[9:]
-        # TODO: Do some validation using the FORMAT column to ensure that
-        # we are actually extracting the GT field (error if no FORMAT column or GT field).
-        # Process each element of the row to extract the GT tag.
-        processed_row = [_process_sample_entry(sample) for sample in samples]
+        # meta[8] should be a format string, which tells us what VCF values are in what fields.
+        # We need to extract the GT field for allele counts.
+        processed_row = [_process_sample_entry(entry=sample, format_str=meta[8]) for sample in samples]
         # Calculate the minor allele frequency of this variant
         var_freq = _calculate_frequency(processed_row)
         # If the max_freq filter is disabled (None) or frequency of
@@ -89,7 +106,7 @@ def read_traw(path: str, max_freq: float):
     # Read in .traw file, which is tab-delimited
     traw_df = pd.read_csv(path, sep="\t", index_col=list(range(6)), dtype=col_dtypes_default)
     # PLINK2 .traw files hold the sum of the REF allele, so flip the count.
-    traw_df = 2-traw_df
+    traw_df = 2 - traw_df
     # Calculate allele frequencies.
     freqs = traw_df.apply(_calculate_frequency, axis=1)
     # Filter on allele frequencies.
@@ -114,5 +131,3 @@ def make_traw_from_vcf(vcf_path: str):
     result = subprocess.check_output(arg_str)
 
     log.info(result)
-
-
