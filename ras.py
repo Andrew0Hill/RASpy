@@ -12,20 +12,15 @@ log = logging.getLogger(__name__)
 def compute_ras_original(df: pd.DataFrame, gens: int, num_vars: int, random_seed: int = None):
     """ Compute RAS pairs and matrix in a similar way to the original Perl script.
 
-    In order to make the computation more feasible in Python, I three minor adjustments, which are also
+    In order to make the computation more feasible in Python I made three minor adjustments, which are also
     explained inline in the code.
 
-        1. Precompute the allele sums for each sample prior to iteration. This saves time (and memory) since
-           each allele sum is calculated n_samples times.
+        1. Precompute the allele sums for each sample/variant prior to iteration. This saves time (and memory) since
+           in the original script each allele sum is calculated n_samples times.
         2. Instead of sampling random variant indexes, and iterating the loop if the variant index is invalid,
            I instead precompute the set of valid variant indexes for each pair of samples, and sample num_vars
            elements from this set. This behavior is equivalent to the original code, but much faster.
         3. Simplified the similarity code logic to make it easier to understand.
-
-
-
-    This function should run much quicker than `compute_ras_original` but uses NumPy specific features to speed up
-    the computation significantly.
 
     :param df: An input DataFrame (n_variants, n_samples) containing a loaded genotype file.
     :param gens: The number of generations to sample for.
@@ -42,7 +37,7 @@ def compute_ras_original(df: pd.DataFrame, gens: int, num_vars: int, random_seed
     # Get an array view on the DataFrame
     df_arr = df.to_numpy(copy=False)
     # Holds results for RAS
-    ras_pairs = {}
+    ras_pair_dict = {}
     # Iterate over all samples (even identity pairs) and calculate RAS
     n_pairs = len(df.columns) ** 2
     # Print log message
@@ -125,11 +120,11 @@ def compute_ras_original(df: pd.DataFrame, gens: int, num_vars: int, random_seed
                 # Compute the estimate for this generation by averaging the num_vars scores.
                 score_means.append(np.mean(scores))
             # Save the num_vars scores for this pair of samples in a dictionary.
-            ras_pairs[(sample1_lbl, sample2_lbl)] = score_means
+            ras_pair_dict[(sample1_lbl, sample2_lbl)] = score_means
             # Print progress
-            progress_bar(n_of_n=(len(ras_pairs), n_pairs))
+            progress_bar(n_of_n=(len(ras_pair_dict), n_pairs))
     # Construct a dataframe of the pair samples.
-    out_pair_df = pd.DataFrame.from_dict(ras_pairs, orient="index")
+    out_pair_df = pd.DataFrame.from_dict(ras_pair_dict, orient="index")
     # Fix the index, so it properly takes up two columns.
     out_pair_df.set_index(pd.MultiIndex.from_tuples(out_pair_df.index, names=["from_id", "to_id"]), inplace=True)
     # Compute the matrix by averaging the num_vars samples for each sample pair, then unstack to create a matrix.
@@ -142,7 +137,7 @@ def compute_ras_optimized(df: pd.DataFrame, gens: int, num_vars: int, random_see
     """ Compute RAS pairs and matrix in an optimized way.
 
     This function should run much quicker than `compute_ras_original` but uses NumPy specific features to speed up
-    the computation significantly.
+    the computation.
 
     :param df: An input DataFrame (n_variants, n_samples) containing a loaded genotype file.
     :param gens: The number of generations to sample for.
@@ -161,21 +156,25 @@ def compute_ras_optimized(df: pd.DataFrame, gens: int, num_vars: int, random_see
     df_arr = df.to_numpy(copy=False)
 
     # We calculate a blocksize that allows us to stay within a reasonable memory limit (4GB)
+    # TODO: Make this configurable, or at least provide a log message about this limit.
     size_thresh = 4e9
     n_variants = df_arr.shape[0]
     n_samples = df_arr.shape[1]
 
+    log.info(f"Using a block size memory threshold of {memory_str(size_thresh)}.")
     block_size_float = size_thresh/(n_variants*n_samples*4)
-    block_size_int = max(int(block_size_float), 1)
+    block_size_int = min(max(int(block_size_float), 1), n_samples)
+
+    block_start_idx = np.arange(0, n_samples, block_size_int)
+    block_end_idx = np.concatenate([block_start_idx[1:], [n_samples]])
+    n_blocks = block_start_idx.shape[0]
 
     if block_size_float < 1:
         # Assumes 32-bit float (4 bytes)
         alloc_size = memory_str(int(n_variants * n_samples * 4))
         log.warning(f"Calculating similarity for single pair requires allocating ({n_variants}, {n_samples}) matrix ({alloc_size}). You may experience a crash if your computer doesn't have enough free memory!")
-
-    block_start_idx = np.arange(0,n_samples,block_size_int)
-    block_end_idx = np.concatenate([block_start_idx[1:], [n_samples]])
-    n_blocks = block_start_idx.shape[0]
+    else:
+        log.info(f"Will calculate RAS in blocks of ({block_size_int}, {n_samples}) ({n_blocks} blocks).")
 
     # Here we take advantage of NumPy broadcasting to allow us to quickly compute
     # pairwise similarity between samples across *all* variants.

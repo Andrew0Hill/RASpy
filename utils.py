@@ -19,6 +19,7 @@ def setup_logging(prefix: str):
         ],
         format="%(asctime)s [%(levelname)s] (%(filename)s) %(message)s"
     )
+    return log_name
 
 
 def parse_args():
@@ -58,12 +59,12 @@ def parse_args():
     parsed_args.output_prefix += f"_{start_time_str}"
 
     # Setup logging
-    setup_logging(prefix=parsed_args.output_prefix)
+    log_name = setup_logging(prefix=parsed_args.output_prefix)
 
     # Log the script name.
     log.info("RAS Python Script v1.0")
     log.info(f"Current Time: {start_time.strftime('%c')}")
-
+    log.info(f"Logging to: {log_name}")
     # Print program configuration to log.
     parsed_args_d = parsed_args.__dict__
     max_key_len = max([len(k) for k in parsed_args_d.keys()])

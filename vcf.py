@@ -39,6 +39,8 @@ def _process_data_rows(row_gen, max_freq: float = None):
         columns = row.rstrip("\n").split("\t")
         meta = columns[0:9]
         samples = columns[9:]
+        # TODO: Do some validation using the FORMAT column to ensure that
+        # we are actually extracting the GT field (error if no FORMAT column or GT field).
         # Process each element of the row to extract the GT tag.
         processed_row = [_process_sample_entry(sample) for sample in samples]
         # Calculate the minor allele frequency of this variant
@@ -64,7 +66,7 @@ def read_vcf(path: str, max_freq: float = None):
         elapsed = time.perf_counter() - start
         # Print information about the VCF.
         log.info(f"VCF loaded in {elapsed:0.2f} seconds.")
-        log.info(f"After variant filtering, Genotype matrix has {geno_df.shape[0]} variants and {geno_df.shape[1]} samples.")
+        log.info(f"After variant filtering, matrix has {geno_df.shape[0]} variants and {geno_df.shape[1]} samples.")
         log.info(f"DataFrame size: {memory_str(geno_df.memory_usage().sum())}")
         return geno_df
 
@@ -80,6 +82,9 @@ def read_traw(path: str, max_freq: float):
         "COUNTED": "str",
         "ALT": "str"
     }
+    # We don't know what the column names of the file will be, but the
+    # defaultdict will return `np.float32` for every entry which is not in the
+    # dict of key/dtypes above.
     col_dtypes_default = defaultdict(np.float32, col_dtypes)
     # Read in .traw file, which is tab-delimited
     traw_df = pd.read_csv(path, sep="\t", index_col=list(range(6)), dtype=col_dtypes_default)
@@ -93,7 +98,7 @@ def read_traw(path: str, max_freq: float):
     elapsed = time.perf_counter() - start
     # Print information about the VCF.
     log.info(f".traw file loaded in {elapsed:0.2f} seconds.")
-    log.info(f"After variant filtering, Genotype matrix has {traw_df.shape[0]} variants and {traw_df.shape[1]} samples.")
+    log.info(f"After variant filtering, matrix has {traw_df.shape[0]} variants and {traw_df.shape[1]} samples.")
     log.info(f"DataFrame size: {memory_str(traw_df.memory_usage().sum())}")
     return traw_df
 
