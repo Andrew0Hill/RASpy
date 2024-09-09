@@ -4,13 +4,13 @@ This is a Python implementation of the `rareAlleleSharing.pl` script from https:
 
 ## Prerequisites
 
-This script was tested under Python 3.11.7 but will likely work with most other versions of Python 3 as well.
+This script was tested under Python 3.11.7 but will likely work with other versions of Python 3 as well.
 
 This script's third-party dependencies are:
 - `numpy <= 2.1.1 (latest)`
 - `pandas >=1.5, <=2.2.2 (latest)`
 
-Other versions of `numpy` and `pandas` may be compatible as well.
+Other versions of `numpy` and `pandas` may be compatible.
 
 ## Installation
 To install the script, clone this repository to your local machine.
@@ -62,17 +62,17 @@ python3 ras.py --vcf input.vcf \
 
 ## Input Files
 
-The script accepts both VCF and .traw (`plink2 --export Av` format) as input using the `--vcf` and `--traw` flags respectively.
+The script accepts both `.vcf` and `.traw` (`plink2 --export Av` format) as input using the `--vcf` and `--traw` flags respectively.
 
-VCF input is slower as it parses the file line-by-line, but may be slightly more space efficient for large files since it can filter and discard rows with MAF > `max_freq` as they are read. 
+`.vcf` input is slower as it parses the file line-by-line, but may be slightly more space efficient for large files since it can filter and discard rows with MAF > `max_freq` as they are read. 
 
-TRAW input uses `pd.read_csv`, so it will read the entire `.traw` file into memory before filtering variants.  
+`.traw` input uses `pd.read_csv`, so it will read the entire `.traw` file into memory before filtering variants. This is fast, but will require enough RAM to hold the pre-filtered file.
 
 ## Output Files
 
 The script will generate three main output files:
 
-1. `<output_prefix>_<date>.log` A log file containing the script's run configuration and log messages
+1. `<output_prefix>_<date>.log` A log file containing the script's run configuration and log messages.
 2. `<output_prefix>_<date>_rasMatrix.csv` The (`n_samples`, `n_samples`) matrix containing pairwise RAS estimates for each pair of samples.
 3. `<output_prefix>_<date>_rasPairs.csv` A file containing `--gens` estimates of RAS for each combination of samples. These estimates are averaged to create the corresponding mean estimate in the `_rasMatrix.csv` file.
 
