@@ -7,21 +7,9 @@ import numpy as np
 import pandas as pd
 
 from vcf import read_vcf, read_traw
-from utils import progress_bar
+from utils import progress_bar, setup_logging, memory_str
 
 log = logging.getLogger(__name__)
-
-
-def setup_logging(prefix: str):
-    log_name = f"{prefix}.log"
-    logging.basicConfig(
-        level=logging.INFO,
-        handlers=[
-            logging.FileHandler(filename=log_name),
-            logging.StreamHandler(sys.stderr)
-        ],
-        format="%(asctime)s [%(levelname)s] (%(filename)s) %(message)s"
-    )
 
 
 def compute_ras_optimized(df: pd.DataFrame, gens: int, num_vars: int, random_seed: int = None, no_sample: bool = False):
@@ -29,19 +17,6 @@ def compute_ras_optimized(df: pd.DataFrame, gens: int, num_vars: int, random_see
     rng = np.random.default_rng(seed=random_seed)
     # Get an array view on the DataFrame
     df_arr = df.to_numpy(copy=False)
-    # This is a little unintuitive, but here we do the following:
-    # Create two numpy arrays with expanded dimensions, to allow for a pairwise
-    # computation using broadcasting.
-    # df_arr = (n_variants, n_samples)
-    # df_arr1 = (n_variants, 1, n_samples)
-    # When broadcasted, the resulting array will be of shape:
-    # ras_matrix_full = (n_variants, n_samples, n_samples)
-    # or a matrix of (n_samples, n_samples) for each variant.
-    # df_arr2 = (n_variants, n_samples, 1)
-    df_arr1 = np.expand_dims(df_arr, 2).copy()
-    df_arr1[df_arr1 == 0] = np.nan
-
-    df_arr2 = np.expand_dims(df_arr, 1)
 
     # Dividing pairwise min/max is a simpler but equivalent way of writing the logic used in compute_ras_original.
     # There are 9 cases, but 3 are skipped (where sample 1 count == 0)
@@ -60,49 +35,94 @@ def compute_ras_optimized(df: pd.DataFrame, gens: int, num_vars: int, random_see
     #   |    2     |     1    |   0.5  |
     #   |    2     |     2    |    1   |
     #   --------------------------------
-    ras_matrix_full = np.minimum(df_arr1, df_arr2) / np.maximum(df_arr1, df_arr2)
 
-    # Above we compute the full similarity across all non-missing genotypes for all samples.
-    # If we don't care about bootstrap sampling, we can end the process by returning the full matrix here.
-    if no_sample:
-        ras_matrix_mean = np.nanmean(ras_matrix_full, axis=0)
-        out_matrix_df = pd.DataFrame(ras_matrix_mean, index=df.columns, columns=df.columns)
-        out_matrix_df.index.name = "from_id"
-        out_matrix_df.columns.name = "to_id"
-        return out_matrix_df, None
+    # Since this broadcast operation is O(n^2) in memory, we will
+    # perform the operation in chunks if the matrix size is too big.
 
-    # Get indices where the RAS matrix is not NaN (i.e. locations with valid genotypes)
-    idx_var, idx_sample1, idx_sample2 = np.where(~np.isnan(ras_matrix_full))
-    # Construct a dataframe of the indices of valid genotypes.
-    idx_df = pd.DataFrame({"idx_var": idx_var, "idx_sample1": idx_sample1, "idx_sample2": idx_sample2})
-    # Collect the valid variant indices for each combination of sample1, sample2.
-    # This lets us avoid wasting time sampling from indices which we know are missing/invalid.
-    valid_idcs = idx_df.groupby(["idx_sample1", "idx_sample2"]).idx_var.apply(np.array)
+    # We calculate a blocksize that allows us to stay within a reasonable memory limit (4GB)
+    size_thresh = 4e9
+    n_variants = df_arr.shape[0]
+    n_samples = df_arr.shape[1]
 
-    # A dictionary to hold output.
-    out_pairs = {}
+    block_size_float = size_thresh/(n_variants*n_samples*4)
+    block_size_int = max(int(block_size_float), 1)
 
-    # Iterate over each pair (sample1, sample2) and sample similarity across (num_vars, gens) locations.
-    for i, (idx_pair, idx_list) in enumerate(zip(valid_idcs.index, valid_idcs)):
-        # Randomly choose (with replacement) from the valid variant locations for this pair (sample1, sample2)
-        random_choice_idcs = rng.choice(idx_list, size=(num_vars, gens), replace=True)
-        # Extract the values of the random choice locations for this pair (sample1, sample2)
-        ras_samples = ras_matrix_full[random_choice_idcs, idx_pair[0], idx_pair[1]]
-        #ras_samples = np.take(tmp_matrix, random_choice_idcs)
-        # Take the mean across the `num_vars` dimension to generate `gens` estimates of the mean RAS.
-        out_pairs[df.columns[idx_pair[0]], df.columns[idx_pair[1]]] = ras_samples.mean(axis=0)
-        # Print a progress bar.
-        progress_bar(n_of_n=(i+1, len(valid_idcs)))
+    if block_size_float < 1:
+        # Assumes 32-bit float (4 bytes)
+        alloc_size = memory_str(int(n_variants * n_samples * 4))
+        log.warning(f"Calculating similarity for single pair requires allocating ({n_variants}, {n_samples}) matrix ({alloc_size}). You may experience a crash if your computer doesn't have enough free memory!")
 
-    # Construct a DataFrame of the output pairs (the equivalent to the .rareAlleleSharingPairs file from the original script).
-    out_pair_df = pd.DataFrame.from_dict(out_pairs, orient="index")
-    out_pair_df.set_index(pd.MultiIndex.from_tuples(out_pair_df.index, names=["from_id", "to_id"]), inplace=True)
+    block_start_idx = np.arange(0,n_samples,block_size_int)
+    block_end_idx = np.concatenate([block_start_idx[1:], [n_samples]])
+    n_blocks = block_start_idx.shape[0]
 
-    # Construct a DataFrame of the output matrix (the equivalent to the .rareAlleleSharingMatrix file from the original script).
-    out_matrix_df = out_pair_df.mean(axis=1).unstack(level="to_id")
+    matrix_exp1 = np.expand_dims(df_arr, 1).copy()
+    matrix_exp1[matrix_exp1 == 0] = np.nan
 
+    full_pairs = []
+    full_matrix = []
+
+    for i, (start_idx, end_idx) in enumerate(zip(block_start_idx, block_end_idx)):
+        log.info(f"Processing block {i+1}/{n_blocks}...")
+        # This is a little unintuitive, but here we do the following:
+        # Create two numpy arrays with expanded dimensions, to allow for a pairwise
+        # computation using broadcasting.
+        # df_arr = (n_variants, n_samples)
+        # df_arr1 = (n_variants, 1, n_samples)
+        # When broadcasted, the resulting array will be of shape:
+        # ras_matrix_full = (n_variants, n_samples, n_samples)
+        # or a matrix of (n_samples, n_samples) for each variant.
+        # df_arr2 = (n_variants, n_samples, 1)
+        chunk_exp2 = np.expand_dims(df_arr[:, start_idx:end_idx], 2)
+
+        ras_matrix_chunk = np.minimum(matrix_exp1, chunk_exp2) / np.maximum(matrix_exp1, chunk_exp2)
+
+        if no_sample:
+            ras_matrix_chunk_mean = np.nanmean(ras_matrix_chunk, axis=0)
+            chunk_matrix_df = pd.DataFrame(ras_matrix_chunk_mean, index=df.columns, columns=df.columns)
+            chunk_matrix_df.index.name = "to_id"
+            chunk_matrix_df.columns.name = "from_id"
+            # Above we compute the full similarity across all non-missing genotypes for all samples.
+            # If we don't care about bootstrap sampling, we can skip the sampling process.
+        else:
+            # Get indices where the RAS matrix is not NaN (i.e. locations with valid genotypes)
+            idx_var, idx_sample1, idx_sample2 = np.where(~np.isnan(ras_matrix_chunk))
+            # Construct a dataframe of the indices of valid genotypes.
+            idx_df = pd.DataFrame({"idx_var": idx_var, "idx_sample1": idx_sample1, "idx_sample2": idx_sample2})
+            # Collect the valid variant indices for each combination of sample1, sample2.
+            # This lets us avoid wasting time sampling from indices which we know are missing/invalid.
+            valid_idcs = idx_df.groupby(["idx_sample1", "idx_sample2"]).idx_var.apply(np.array)
+
+            # A dictionary to hold output.
+            chunk_pairs = {}
+
+            # Iterate over each pair (sample1, sample2) and sample similarity across (num_vars, gens) locations.
+            for i, (idx_pair, idx_list) in enumerate(zip(valid_idcs.index, valid_idcs)):
+                # Randomly choose (with replacement) from the valid variant locations for this pair (sample1, sample2)
+                random_choice_idcs = rng.choice(idx_list, size=(num_vars, gens), replace=True)
+                # Extract the values of the random choice locations for this pair (sample1, sample2)
+                ras_samples = ras_matrix_chunk[random_choice_idcs, idx_pair[0], idx_pair[1]]
+                # ras_samples = np.take(tmp_matrix, random_choice_idcs)
+                # Take the mean across the `num_vars` dimension to generate `gens` estimates of the mean RAS.
+                chunk_pairs[df.columns[idx_pair[0]], df.columns[idx_pair[1]]] = ras_samples.mean(axis=0)
+                # Print a progress bar.
+                progress_bar(n_of_n=(i + 1, len(valid_idcs)))
+
+            # Construct a DataFrame of the output pairs (the equivalent to the .rareAlleleSharingPairs file from the original script).
+            chunk_pair_df = pd.DataFrame.from_dict(chunk_pairs, orient="index")
+            chunk_pair_df.set_index(pd.MultiIndex.from_tuples(chunk_pair_df.index, names=["to_id", "from_id"]), inplace=True)
+            full_pairs.append(chunk_pair_df)
+
+            # Construct a DataFrame of the output matrix (the equivalent to the .rareAlleleSharingMatrix file from the original script).
+            chunk_matrix_df = chunk_pair_df.mean(axis=1).unstack(level="to_id")
+        full_matrix.append(chunk_matrix_df)
+
+    if len(full_pairs) != 0:
+        full_pairs_df = pd.concat(full_pairs, axis=0)
+
+    full_matrix_df = pd.concat(full_matrix, axis=1)
     # Return results
-    return out_matrix_df, out_pair_df
+    return full_matrix_df, full_pairs_df
 
 
 def compute_ras_original(df: pd.DataFrame, gens: int, num_vars: int, random_seed: int = None):
@@ -285,6 +305,9 @@ if __name__ == "__main__":
         geno_df = read_traw(path=args.traw, max_freq=args.max_freq)
     else:
         raise RuntimeError("Either --vcf or --traw input must be specified!")
+
+    geno_df = pd.concat([geno_df]*10, axis=1)
+    geno_df.columns = [f"sample_{i}" for i in range(geno_df.shape[1])]
 
     # Compute RAS
     ras_results = compute_ras(df=geno_df, gens=args.gens, num_vars=args.num_vars, use_optimized_method=args.optimized, random_seed=args.random_seed, no_sample=args.no_sample)

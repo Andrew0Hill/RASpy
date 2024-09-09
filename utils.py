@@ -1,3 +1,21 @@
+import sys
+import logging
+
+import numpy as np
+
+
+def setup_logging(prefix: str):
+    log_name = f"{prefix}.log"
+    logging.basicConfig(
+        level=logging.INFO,
+        handlers=[
+            logging.FileHandler(filename=log_name),
+            logging.StreamHandler(sys.stderr)
+        ],
+        format="%(asctime)s [%(levelname)s] (%(filename)s) %(message)s"
+    )
+
+
 def progress_bar(width=80, progress: float = None, n_of_n: tuple[int, int] = None, per_sec: float = None):
     """ Generate a simple progress bar showing the progress of some operation.
 
@@ -30,3 +48,17 @@ def progress_bar(width=80, progress: float = None, n_of_n: tuple[int, int] = Non
     blanks = " "*(width-len(arrow))
 
     print(f"[{arrow}{blanks}] ({n_of_n_msg}{per_sec_msg})", end="\r" if progress == 0.0 else "\n" if progress == 1.0 else "\r")
+
+
+def memory_str(n_bytes: int):
+    if n_bytes < 0:
+        raise ValueError("Negative bytes!")
+
+    log_bytes = np.log10(n_bytes)
+
+    bytes_log_thresh = np.array([3, 6, 9, 12])
+    bytes_label = ["B", "KB", "MB", "GB"]
+
+    bytes_idx = max(np.searchsorted(bytes_log_thresh, log_bytes, side="right"), 0)
+
+    return f"{np.power(10, 3 + log_bytes - bytes_log_thresh[bytes_idx]):0.1f}{bytes_label[bytes_idx]}"

@@ -5,6 +5,8 @@ import os
 import time
 import subprocess
 import pandas as pd
+from collections import defaultdict
+from utils import memory_str
 
 log = logging.getLogger(__name__)
 
@@ -19,9 +21,11 @@ def _process_sample_entry(entry: str):
             gt_vals = gt_field.split(sep)
             break
     if gt_vals is None or len(gt_vals) != 2:
-        raise RuntimeError(f"Error when parsing VCF, got unexpected value '{gt_field}' for GT tag.")
+        log.warning(f"Encountered unexpected value '{gt_field}' for GT tag, will be coded as NaN.")
+        gt_vals = (".", ".")
+        #raise RuntimeError(f"Error when parsing VCF, got unexpected value '{gt_field}' for GT tag.")
 
-    return sum([np.nan if v == "." else int(v) for v in gt_vals])
+    return np.sum([np.float32(np.nan if v == "." else v) for v in gt_vals])
 
 
 def _calculate_frequency(elems):
@@ -52,22 +56,33 @@ def read_vcf(path: str, max_freq: float = None):
         # Skip all header lines which begin with a double hash.
         post_header_rows = (row for row in vcf_f if not row.startswith("##"))
         # The column label row will have a single hash.
-        col_labels = next(post_header_rows).strip("#").split("\t")
+        col_labels = next(post_header_rows).strip("#").rstrip("\n").split("\t")
         # Data rows are everything following the column label row.
         data_rows = list(_process_data_rows(post_header_rows, max_freq=max_freq))
         # Create a dataframe output
-        geno_df = pd.DataFrame.from_records(data_rows, columns=col_labels, index=col_labels[:9])
+        geno_df = pd.DataFrame.from_records(data_rows, columns=col_labels, index=col_labels[:9], )
         elapsed = time.perf_counter() - start
         # Print information about the VCF.
         log.info(f"VCF loaded in {elapsed:0.2f} seconds.")
         log.info(f"After variant filtering, Genotype matrix has {geno_df.shape[0]} variants and {geno_df.shape[1]} samples.")
+        log.info(f"DataFrame size: {memory_str(geno_df.memory_usage().sum())}")
         return geno_df
 
 
 def read_traw(path: str, max_freq: float):
     start = time.perf_counter()
+    # Parse all columns except the 6 fixed metadata columns as float32.
+    col_dtypes = {
+        "CHR": "str",
+        "SNP": "str",
+        "(C)M": "str",
+        "POS": "str",
+        "COUNTED": "str",
+        "ALT": "str"
+    }
+    col_dtypes_default = defaultdict(np.float32, col_dtypes)
     # Read in .traw file, which is tab-delimited
-    traw_df = pd.read_csv(path, sep="\t", index_col=list(range(6)))
+    traw_df = pd.read_csv(path, sep="\t", index_col=list(range(6)), dtype=col_dtypes_default)
     # PLINK2 .traw files hold the sum of the REF allele, so flip the count.
     traw_df = 2-traw_df
     # Calculate allele frequencies.
@@ -79,6 +94,7 @@ def read_traw(path: str, max_freq: float):
     # Print information about the VCF.
     log.info(f".traw file loaded in {elapsed:0.2f} seconds.")
     log.info(f"After variant filtering, Genotype matrix has {traw_df.shape[0]} variants and {traw_df.shape[1]} samples.")
+    log.info(f"DataFrame size: {memory_str(traw_df.memory_usage().sum())}")
     return traw_df
 
 
