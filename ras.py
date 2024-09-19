@@ -109,7 +109,7 @@ def compute_ras_original(df: pd.DataFrame, gens: int, num_vars: int, random_seed
     return out_matrix_df, out_pair_df
 
 
-def compute_ras_optimized(df: pd.DataFrame, gens: int, num_vars: int, random_seed: int = None, no_sample: bool = False):
+def compute_ras_optimized(df: pd.DataFrame, gens: int, num_vars: int, random_seed: int = None, no_sample: bool = False, matrix_mem_limit: int = None):
     """ Compute RAS pairs and matrix in an optimized way.
 
     This function should run much quicker than `compute_ras_original` but uses NumPy specific features to speed up
@@ -121,6 +121,8 @@ def compute_ras_optimized(df: pd.DataFrame, gens: int, num_vars: int, random_see
     :param num_vars: The number of variants to sample for each of the 'gens' iterations.
     :param random_seed: An integer random seed to allow for reproducibility (if all other arguments remain identical)
     :param no_sample: A boolean flag to disable the bootstrap sampling, and instead compute RAS over all variants.
+    :param matrix_mem_limit: Limit the matrix blocks we generate to be <= matrix_mem_limit bytes. Default is 4GB but
+                             higher values will enable quicker execution.
     :return: A tuple containing two DataFrames:
                 1. A DataFrame containing the (n_samples, n_samples) RAS matrix.
                 2. A DataFrame containing the (n_samples^2, gens) RAS estimates for each pair of samples.
@@ -133,7 +135,7 @@ def compute_ras_optimized(df: pd.DataFrame, gens: int, num_vars: int, random_see
 
     # We calculate a blocksize that allows us to stay within a reasonable memory limit (4GB)
     # TODO: Make this configurable, or at least provide a log message about this limit.
-    size_thresh = 4e9
+    size_thresh = matrix_mem_limit or 4e9
     n_variants = df_arr.shape[0]
     n_samples = df_arr.shape[1]
 
@@ -225,7 +227,7 @@ def compute_ras_optimized(df: pd.DataFrame, gens: int, num_vars: int, random_see
                 ras_samples = ras_matrix_chunk[random_choice_idcs, idx_pair[0], idx_pair[1]]
                 # ras_samples = np.take(tmp_matrix, random_choice_idcs)
                 # Take the mean across the `num_vars` dimension to generate `gens` estimates of the mean RAS.
-                chunk_pairs[df.columns[idx_pair[0]], df.columns[idx_pair[1]]] = ras_samples.mean(axis=0)
+                chunk_pairs[df.columns[start_idx + idx_pair[0]], df.columns[idx_pair[1]]] = ras_samples.mean(axis=0)
                 # Print a progress bar.
                 progress_bar(n_of_n=(i + 1, len(valid_idcs)))
 
@@ -251,7 +253,7 @@ def compute_ras_optimized(df: pd.DataFrame, gens: int, num_vars: int, random_see
     return full_matrix_df, full_pairs_df
 
 
-def compute_ras(df: pd.DataFrame, gens: int, num_vars: int, random_seed: int = None, use_optimized_method: bool = False, no_sample: bool = False):
+def compute_ras(df: pd.DataFrame, gens: int, num_vars: int, random_seed: int = None, use_optimized_method: bool = False, no_sample: bool = False, matrix_mem_limit: int = None):
     """ This is a dispatch function which will select either the original (use_optimized_method=False) or new (use_optimized_method=True)
     method of computing RAS.
 
@@ -262,13 +264,15 @@ def compute_ras(df: pd.DataFrame, gens: int, num_vars: int, random_seed: int = N
     :param random_seed: An integer random seed to allow for reproducibility (if all other arguments remain identical)
     :param use_optimized_method: Boolean flag. If selected, use a faster method of computing RAS.
     :param no_sample: A boolean flag to disable the bootstrap sampling, and instead compute RAS over all variants.
+    :param matrix_mem_limit: Limit the matrix blocks we generate to be <= matrix_mem_limit bytes. Default is 4GB but
+                             higher values will enable quicker execution.
     :return: A tuple containing two DataFrames:
                 1. A DataFrame containing the (n_samples, n_samples) RAS matrix.
                 2. A DataFrame containing the (n_samples^2, gens) RAS estimates for each pair of samples.
                    These `gens` estimates are averaged to obtain the value in the RAS matrix.
     """
     if use_optimized_method:
-        ras_result = compute_ras_optimized(df=df, gens=gens, num_vars=num_vars, random_seed=random_seed, no_sample=no_sample)
+        ras_result = compute_ras_optimized(df=df, gens=gens, num_vars=num_vars, random_seed=random_seed, no_sample=no_sample, matrix_mem_limit=matrix_mem_limit)
     else:
         ras_result = compute_ras_original(df=df, gens=gens, num_vars=num_vars, random_seed=random_seed)
     return ras_result
@@ -290,7 +294,15 @@ if __name__ == "__main__":
         raise RuntimeError("Either --vcf or --traw input must be specified!")
 
     # Compute RAS
-    ras_matrix, ras_pairs = compute_ras(df=geno_df, gens=args.gens, num_vars=args.num_vars, use_optimized_method=args.optimized, random_seed=args.random_seed, no_sample=args.no_sample)
+    ras_matrix, ras_pairs = compute_ras(
+        df=geno_df,
+        gens=args.gens,
+        num_vars=args.num_vars,
+        use_optimized_method=args.optimized,
+        random_seed=args.random_seed,
+        no_sample=args.no_sample,
+        matrix_mem_limit=args.matrix_mem_limit
+    )
 
     # Write results
     write_results(output_prefix=args.output_prefix, ras_matrix=ras_matrix, ras_pairs=ras_pairs)

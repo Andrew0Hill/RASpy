@@ -56,7 +56,7 @@ def parse_args():
     parser.add_argument("--random_seed", type=int, default=None, help="Random seed for reproducibility.")
     parser.add_argument("--optimized", action="store_true", help="If this flag is passed, use a faster RAS computation which is numerically identical to the original implementation.")
     parser.add_argument("--no_sample", action="store_true", help="If this flag is passed, calculate RAS across all variants which pass filtering without random sampling. No effect unless using optimized (--optimized) algorithm,")
-
+    parser.add_argument("--matrix_mem_limit", type=float, help="When using --optimized, this parameter controls the memory limit in bytes imposed for each matrix block computation. Total program memory consumption will exceed this limit. Default is 4GB" )
     parsed_args = parser.parse_args()
 
     # If output prefix is None, use input filename as output prefix.
@@ -82,7 +82,12 @@ def parse_args():
 
     log.info("Args".center(header_len, "="))
     for arg_key, arg_val in parsed_args_d.items():
-        log.info(f"{arg_key.rjust(max_key_len)}: {arg_val}")
+        # Print a nicely formatted string for the memory limit.
+        if arg_key == "matrix_mem_limit" and arg_val is not None:
+            log.info(f"{arg_key.rjust(max_key_len)}: {memory_str(arg_val)}")
+        else:
+            log.info(f"{arg_key.rjust(max_key_len)}: {arg_val}")
+
     log.info("="*header_len)
 
     return parsed_args
