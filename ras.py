@@ -215,19 +215,25 @@ def compute_ras_optimized(df: pd.DataFrame, gens: int, num_vars: int, random_see
             # Collect the valid variant indices for each combination of sample1, sample2.
             # This lets us avoid wasting time sampling from indices which we know are missing/invalid.
             valid_idcs = idx_df.groupby(["idx_sample1", "idx_sample2"]).idx_var.apply(np.array)
-
+            valid_idcs = valid_idcs.reindex(pd.MultiIndex.from_product([range(ras_matrix_chunk.shape[1]), range(ras_matrix_chunk.shape[2])]))
+            assert len(valid_idcs) == ras_matrix_chunk.shape[1] * ras_matrix_chunk.shape[2]
             # A dictionary to hold output.
             chunk_pairs = {}
 
             # Iterate over each pair (sample1, sample2) and sample similarity across (num_vars, gens) locations.
             for i, (idx_pair, idx_list) in enumerate(zip(valid_idcs.index, valid_idcs)):
-                # Randomly choose (with replacement) from the valid variant locations for this pair (sample1, sample2)
-                random_choice_idcs = rng.choice(idx_list, size=(num_vars, gens), replace=True)
-                # Extract the values of the random choice locations for this pair (sample1, sample2)
-                ras_samples = ras_matrix_chunk[random_choice_idcs, idx_pair[0], idx_pair[1]]
-                # ras_samples = np.take(tmp_matrix, random_choice_idcs)
-                # Take the mean across the `num_vars` dimension to generate `gens` estimates of the mean RAS.
-                chunk_pairs[df.columns[start_idx + idx_pair[0]], df.columns[idx_pair[1]]] = ras_samples.mean(axis=0)
+                # If the pair has no valid combinations, RAS is 0
+                if not isinstance(idx_list, np.ndarray):
+                    ras_val = np.zeros(gens, dtype=np.float32)
+                else:
+                    # Randomly choose (with replacement) from the valid variant locations for this pair (sample1, sample2)
+                    random_choice_idcs = rng.choice(idx_list, size=(num_vars, gens), replace=True)
+                    # Extract the values of the random choice locations for this pair (sample1, sample2)
+                    ras_samples = ras_matrix_chunk[random_choice_idcs, idx_pair[0], idx_pair[1]]
+                    # ras_samples = np.take(tmp_matrix, random_choice_idcs)
+                    # Take the mean across the `num_vars` dimension to generate `gens` estimates of the mean RAS.
+                    ras_val = ras_samples.mean(axis=0)
+                chunk_pairs[df.columns[start_idx + idx_pair[0]], df.columns[idx_pair[1]]] = ras_val
                 # Print a progress bar.
                 progress_bar(n_of_n=(i + 1, len(valid_idcs)))
 
