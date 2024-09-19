@@ -65,34 +65,37 @@ def compute_ras_original(df: pd.DataFrame, gens: int, num_vars: int, random_seed
             )
             # Iterate generations
             for i in range(gens):
-                scores = []
-                # Since we know all indices we are sampling are valid, we can directly sample the exact number of variants
-                # we want (with replacement) for identical behavior to the original script.
-                for index in rng.choice(valid_idcs, size=num_vars):
-                    # index = rng.choice(len(df_arr))
-                    # Allele sums for each sample are precomputed
-                    sum1 = df_arr[index, sample1_ind]
-                    sum2 = df_arr[index, sample2_ind]
-                    # if np.any(np.isnan([allele1, allele2, allele3, allele4])) | ((allele1 == 0) & (allele2 == 0)):
-                    #     pass
-                    if (np.isnan(sum1) | np.isnan(sum2)) | (sum1 == 0):
-                        raise RuntimeError(
-                            "Shouldn't encounter NaN sums, or sum1==0 since valid indices have been precomputed!")
-                    else:
-                        if sum1 == 0:
-                            raise ValueError
-                        # Python version of the similarity computation.
-                        # Compared to original, we precompute allele sums, and
-                        # simplify similarity comparison logic.
-                        # Behavior is identical to original version.
-                        if sum2 == 0:
-                            similarity = 0
-                        elif sum1 == sum2:
-                            similarity = 1
+                if len(valid_idcs) == 0:
+                    scores = [0]*30
+                else:
+                    scores = []
+                    # Since we know all indices we are sampling are valid, we can directly sample the exact number of variants
+                    # we want (with replacement) for identical behavior to the original script.
+                    for index in rng.choice(valid_idcs, size=num_vars):
+                        # index = rng.choice(len(df_arr))
+                        # Allele sums for each sample are precomputed
+                        sum1 = df_arr[index, sample1_ind]
+                        sum2 = df_arr[index, sample2_ind]
+                        # if np.any(np.isnan([allele1, allele2, allele3, allele4])) | ((allele1 == 0) & (allele2 == 0)):
+                        #     pass
+                        if (np.isnan(sum1) | np.isnan(sum2)) | (sum1 == 0):
+                            raise RuntimeError(
+                                "Shouldn't encounter NaN sums, or sum1==0 since valid indices have been precomputed!")
                         else:
-                            similarity = 0.5
-                        # Construct a list of all scores for this generation
-                        scores.append(similarity)
+                            if sum1 == 0:
+                                raise ValueError
+                            # Python version of the similarity computation.
+                            # Compared to original, we precompute allele sums, and
+                            # simplify similarity comparison logic.
+                            # Behavior is identical to original version.
+                            if sum2 == 0:
+                                similarity = 0
+                            elif sum1 == sum2:
+                                similarity = 1
+                            else:
+                                similarity = 0.5
+                            # Construct a list of all scores for this generation
+                            scores.append(similarity)
                 # Compute the estimate for this generation by averaging the num_vars scores.
                 score_means.append(np.mean(scores))
             # Save the num_vars scores for this pair of samples in a dictionary.
