@@ -51,8 +51,8 @@ def parse_args():
     # Other options
     parser.add_argument("--output_prefix", help="Path/prefix for the output files.")
     parser.add_argument("--max_freq", type=float, required=True, default=0.1, help="Variants with MAF > max_freq will be excluded from the RAS calculation.")
-    parser.add_argument("--gens", type=int, required=True, default=30, help="Number of bootstrap iterations to perform")
-    parser.add_argument("--num_vars", type=int, required=True, default=500, help="At each bootstrap iteration, sample until we have similarity scores for n_variants.")
+    parser.add_argument("--gens", type=int, required=False, default=30, help="Number of bootstrap iterations to perform")
+    parser.add_argument("--num_vars", type=int, required=False, default=500, help="At each bootstrap iteration, sample until we have similarity scores for n_variants.")
     parser.add_argument("--random_seed", type=int, default=None, help="Random seed for reproducibility.")
     parser.add_argument("--optimized", action="store_true", help="If this flag is passed, use a faster RAS computation which is numerically identical to the original implementation.")
     parser.add_argument("--no_sample", action="store_true", help="If this flag is passed, calculate RAS across all variants which pass filtering without random sampling. No effect unless using optimized (--optimized) algorithm,")
