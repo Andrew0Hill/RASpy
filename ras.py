@@ -251,11 +251,10 @@ def compute_ras_optimized(df: pd.DataFrame, gens: int, num_vars: int, random_see
 
     # Matrices are constructed slightly differently depending on if we sample (default) or compute
     # full RAS (--no_sample), so we concatenate differently here.
+    full_matrix_df = pd.concat(full_matrix, axis=1)
     if no_sample:
-        full_matrix_df = pd.concat(full_matrix, axis=0)
         full_pairs_df = None
     else:
-        full_matrix_df = pd.concat(full_matrix, axis=1)
         full_pairs_df = pd.concat(full_pairs, axis=0)
 
     # Return results
